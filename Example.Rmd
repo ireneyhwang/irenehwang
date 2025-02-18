@@ -1,8 +1,3 @@
----
-title: "Week 11 Code"
-output: pdf_document
-date: "2024-11-29"
----
 
 ```{r}
 # Load the necessary libraries for the analysis:
