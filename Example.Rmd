@@ -1,0 +1,409 @@
+---
+title: "Week 11 Code"
+output: pdf_document
+date: "2024-11-29"
+---
+
+```{r}
+# Load the necessary libraries for the analysis:
+
+# tidycensus: For accessing and working with U.S. Census data
+library(tidycensus)
+
+# tidyverse: A collection of R packages for data manipulation and visualization
+# Includes ggplot2 for visualization, dplyr for data wrangling, and more
+library(tidyverse)
+
+# factoextra: For clustering visualization and analysis
+library(factoextra)
+
+# gridExtra and grid: For advanced plotting capabilities, such as combining multiple plots
+library(gridExtra)
+library(grid)
+
+# janitor: For cleaning data, such as renaming or cleaning column names
+library(janitor)
+
+# leaflet: For creating interactive maps
+library(leaflet)
+
+# viridis: For colorblind-friendly color palettes
+library(viridis)
+
+# Additional comments:
+# - Ensure that all libraries are installed before running this script.
+# - Use `install.packages("package_name")` if any library is missing.
+```
+
+```{r}
+# Define states in each region
+regions <- list(
+  "West Coast" = c("CA", "OR", "WA"),
+  "Midwest" = c("IL", "IN", "IA", "KS", "MI", "MN", "MO", "NE", "ND", "OH", "SD", "WI"),
+  "Northeast" = c("CT", "ME", "MA", "NH", "NJ", "NY", "PA", "RI", "VT")
+)
+
+```
+
+
+
+```{r}
+# Set up the census API key to access census data. Overwrite = TRUE allows replacing any existing API key in the session.
+census_api_key("7157b90f5279392bef418a649d5ff4fe63f121ae", overwrite = TRUE)
+```
+
+```{r}
+acs_2022 <- load_variables(2022, "acs5", cache = TRUE)
+
+view(acs_2022)
+```
+
+#   Tabular Version
+
+```{r} 
+# Define variables of interest for analysis
+housing_variables <- c(
+  median_home_value = "B25077_001E",  # Median value of owner-occupied housing units
+  median_gross_rent = "B25064_001E",  # Median gross rent
+  median_household_income = "B19013_001E",  # Median household income
+  vacancy_rate = "B25002_003E",  # Vacant housing units (used to calculate vacancy rate)
+  population = "B01003_001E",
+  median_age = "B01002_001E" # Total population
+)
+
+# Import and preprocess American Community Survey (ACS) data for Kansas City, Missouri (tract level)
+# Fetch ACS data for all states in defined regions
+all_region_data <- list()
+
+for (region_name in names(regions)) {
+  for (state_abbr in regions[[region_name]]) {
+    state_data <- get_acs(
+      geography = "county",
+      variables = housing_variables,
+      state = state_abbr,
+      year = 2022
+    ) %>%
+      janitor::clean_names() %>%
+      mutate(region = region_name)  # Add a column for the region name
+    
+    all_region_data[[paste(region_name, state_abbr, sep = "_")]] <- state_data
+  }
+}
+
+# Combine data from all states into a single data frame
+housing_data <- bind_rows(all_region_data) %>%
+  separate(name, into = c("county", "state"), sep = ", ") %>%
+  mutate(
+    county = trimws(county),
+    state = trimws(state)
+  ) %>%
+  select(-state)
+
+glimpse(housing_data)
+```
+
+#   SPATIAL VERSION
+
+```{r}
+# Define variables of interest for analysis
+housing_variables <- c(
+  median_home_value = "B25077_001E",  # Median value of owner-occupied housing units
+  median_gross_rent = "B25064_001E",  # Median gross rent
+  median_household_income = "B19013_001E",  # Median household income
+  vacancy_rate = "B25002_003E",  # Vacant housing units (used to calculate vacancy rate)
+  population = "B01003_001E" ,
+  median_age = "B01002_001E" # Total population
+)
+
+# Import and preprocess American Community Survey (ACS) data for Kansas City, Missouri (tract level)
+# Fetch ACS data for all states in defined regions
+all_region_data <- list()
+
+for (region_name in names(regions)) {
+  for (state_abbr in regions[[region_name]]) {
+    state_data <- get_acs(
+      geography = "county",
+      variables = housing_variables,
+      state = state_abbr,
+      year = 2022,
+      geometry = TRUE
+    ) %>%
+      janitor::clean_names() %>%
+      mutate(region = region_name)  # Add a column for the region name
+    
+    all_region_data[[paste(region_name, state_abbr, sep = "_")]] <- state_data
+  }
+}
+
+# Combine data from all states into a single data frame
+housing_data_sf <- bind_rows(all_region_data) %>%
+  dplyr::select(geoid, geometry)
+
+glimpse(housing_data_sf)
+```
+
+
+```{r}
+# Clean and reshape the data
+housing_data_clean <- housing_data %>%
+  dplyr::select(geoid, variable, estimate, region) %>%
+  mutate(
+    variable = case_when(
+      variable == "B25077_001" ~ "median_home_value",
+      variable == "B25064_001" ~ "median_gross_rent",
+      variable == "B19013_001" ~ "median_household_income",
+      variable == "B25002_003" ~ "vacancy_rate",
+      variable == "B01003_001" ~ "population",
+      variable == "B01002_001" ~ "median_age",
+
+      TRUE ~ variable
+    )
+  ) %>%
+  pivot_wider(names_from = variable, values_from = estimate) %>%
+  drop_na()  # Remove rows with missing data
+
+# Add ROI calculation
+housing_data_clean <- housing_data_clean %>%
+  mutate(
+    roi = ifelse(
+      !is.na(median_gross_rent) & !is.na(median_home_value) & median_home_value != 0,
+      (median_gross_rent / median_home_value) * 100,  # Example ROI formula
+      NA  # Handle missing or invalid data
+    )
+  )
+
+# Debugging: Check if ROI is added correctly
+glimpse(housing_data_clean)
+summary(housing_data_clean$roi)
+
+
+# Additional Notes:
+# - `geoid`: A unique identifier for each tract, useful for spatial analysis.
+# - `pivot_wider()`: Used to transform long data into a wide format for easier analysis.
+# - `drop_na()`: Ensures that incomplete rows (with missing values) are excluded.
+```
+
+```{r}
+# Summarize ROI by region
+roi_summary <- housing_data_clean %>%
+  group_by(region) %>%
+  summarise(
+    avg_roi = mean(roi, na.rm = TRUE),
+    median_roi = median(roi, na.rm = TRUE),
+    max_roi = max(roi, na.rm = TRUE),
+    min_roi = min(roi, na.rm = TRUE)
+  )
+
+# Display the ROI summary
+print(roi_summary)
+
+```
+
+
+
+###     Convert DataFrame for Clustering Analysis
+
+```{r}
+# Prepare the dataset for clustering analysis
+# Convert the `geoid` column into row names to use them as unique identifiers
+housing_data_clean_rownames <- housing_data_clean %>%
+    dplyr::select(-region) %>%
+  column_to_rownames(var = "geoid")  # Assign `geoid` as row names
+```
+
+
+
+###     Perform K-Means Cluster Analysis
+
+```{r}
+# K-means clustering with centers ranging from 2 to 5
+# nstart = 25 ensures 25 random starting configurations to improve clustering results
+k2 <- kmeans(housing_data_clean_rownames, centers = 2, nstart = 25)  # 2 clusters
+k3 <- kmeans(housing_data_clean_rownames, centers = 3, nstart = 25)  # 3 clusters
+k4 <- kmeans(housing_data_clean_rownames, centers = 4, nstart = 25)  # 4 clusters
+k5 <- kmeans(housing_data_clean_rownames, centers = 5, nstart = 25) 
+k6 <- kmeans(housing_data_clean_rownames, centers = 6, nstart = 25) # 5 clusters
+
+# Add cluster assignments from the 2-cluster solution (k2) to the dataset
+data_name_cluster <- housing_data_clean_rownames %>%
+  mutate(cluster = k2$cluster)  # Append the cluster assignments as a new column
+```
+
+```{r}
+# Select relevant columns for clustering (update column names as necessary)
+# Exclude the geoid column and use features for clustering
+cluster_features <- housing_data_clean_rownames %>%
+  select(population, median_household_income, vacancy_rate, 
+         median_gross_rent, median_home_value, median_age)
+
+# Perform clustering again using only the feature columns
+k2 <- kmeans(cluster_features, centers = 2, nstart = 25)
+k3 <- kmeans(cluster_features, centers = 3, nstart = 25)
+k4 <- kmeans(cluster_features, centers = 4, nstart = 25)
+k5 <- kmeans(cluster_features, centers = 5, nstart = 25)
+k6 <- kmeans(cluster_features, centers = 6, nstart = 25)
+
+# Add cluster assignments to the original data for visualization
+cluster_features_with_clusters <- cluster_features %>%
+  mutate(cluster = k2$cluster)
+
+# Visualize clusters using ggplot2
+visualize_clusters <- function(cluster_obj, data, k) {
+  # Add cluster assignments to data
+  clustered_data <- data %>%
+    mutate(cluster = factor(cluster_obj$cluster))
+  
+  # Create a scatterplot (choosing two features for the axes)
+  ggplot(clustered_data, aes(x = median_home_value, y = median_gross_rent, color = cluster, shape = cluster)) +
+    geom_point(size = 3, alpha = 0.7) +
+    scale_color_viridis_d(option = "plasma") +
+    scale_shape_manual(values = 1:nlevels(clustered_data$cluster)) +
+    labs(
+      title = paste("k-means =", k),
+      x = "", 
+      y = "",
+      color = "Cluster", shape = "Cluster"
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks = element_blank(),
+      legend.position = "right"
+    )
+}
+
+# Generate visualizations for 2, 3, 4, and 5 clusters
+p1 <- visualize_clusters(k2, cluster_features, 2)
+p2 <- visualize_clusters(k3, cluster_features, 3)
+p3 <- visualize_clusters(k4, cluster_features, 4)
+p4 <- visualize_clusters(k5, cluster_features, 5)
+p5 <- visualize_clusters(k5, cluster_features, 6)
+
+# Arrange the cluster visualizations in a grid
+grid.arrange(
+  p1, p2, p3, p4,
+  nrow = 2, 
+  top = grid::textGrob("Determining Optimal Number of Clusters",
+                       gp = gpar(fontsize = 14, fontface = "bold", fontfamily = "Times New Roman"))
+)
+
+```
+
+```{r}
+# Use fviz_nbclust to calculate and visualize the optimal number of clusters
+# The silhouette method evaluates the quality of clustering for a range of cluster numbers
+fviz_nbclust(
+  cluster_features,         # The dataset containing numerical features for clustering
+  kmeans,                   # The clustering method (k-means in this case)
+  method = "silhouette"     # Use the silhouette method to assess cluster quality
+) +
+  labs(
+    title = "Optimal Number of Clusters Using the Silhouette Method",
+    x = "Number of Clusters (k)",
+    y = "Average Silhouette Width"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12)
+  )
+```
+
+
+```{r}
+# Convert the clustered dataset back to a data frame and add the geoid column
+data_name_cluster_df <- data_name_cluster %>%
+  rownames_to_column(var = "geoid") %>%  # Add the `geoid` column from row names
+  dplyr::mutate(cluster = as.factor(cluster))  # Ensure `cluster` is treated as a categorical variable
+
+# Display the structure of the updated data frame
+glimpse(data_name_cluster_df)
+```
+
+```{r}
+# Merge spatial ACS data with cluster assignments for mapping
+housing_data_v2 <- housing_data %>%
+  dplyr::left_join(data_name_cluster_df, by = "geoid") %>%  # Join cluster assignments to spatial data
+  drop_na(cluster)  # Remove rows without cluster assignments (if any)
+
+# Merge spatial ACS data with cluster assignments for mapping
+housing_data_sf_v2 <- housing_data_sf %>%
+  dplyr::left_join(data_name_cluster_df, by = "geoid") %>%  # Join cluster assignments to spatial data
+  drop_na(cluster)  # Remove rows without cluster assignments (if any)
+
+glimpse(housing_data_v2)
+```
+
+```{r}
+# Create a color palette based on the existing clusters
+unique_clusters <- unique(housing_data_sf_v2$cluster)
+color_palette <- colorFactor(viridis_pal(option = "plasma")(length(unique_clusters)), domain = unique_clusters)
+
+# Create the Leaflet map
+leaflet_map <- leaflet(housing_data_sf_v2) %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  addPolygons(
+    fillColor = ~colorFactor("plasma", cluster)(cluster), # Use the "plasma" color palette to fill polygons based on `housing_increase`
+    weight = 0.5,
+    color = "white",
+    fillOpacity = 0.2,
+    label = ~paste0(
+      "<strong>GEOID: </strong>", geoid, "<br>",
+      "<strong>ROI: </strong>", roi, "<br>",
+      "<strong>Population: </strong>", population, "<br>",
+      "<strong>Median Household Income: </strong>", median_household_income, "<br>",
+      "<strong>Vacancy Rate: </strong>", vacancy_rate, "<br>",
+      "<strong>Median Gross Rent: </strong>", median_gross_rent, "<br>",
+      "<strong>Median Home Value: </strong>", median_home_value, "<br>",
+      "<strong>Median Age : </strong>", median_age, "<br>",
+      "<strong>Cluster: </strong>", cluster
+    ) %>% lapply(htmltools::HTML)
+  ) %>%
+  addLegend(
+    position = "bottomright",
+    pal = color_palette,
+    values = ~cluster,
+    title = "Cluster",
+  )
+
+# Display the map
+leaflet_map
+```
+
+###     Convert Clustered Dataset Back to a DataFrame Format
+
+```{r}
+options(scipen = 999)
+# Conduct t-tests for each variable by cluster
+
+# 1. T-test for ROI
+t_test_roi <- t.test(roi ~ cluster, data = housing_data_v2, var.equal = FALSE)
+print("T-Test for ROI")
+print(t_test_roi)
+```
+
+```{r}
+count_by_cluster <- housing_data_v2 %>%
+  count(cluster, region)
+```
+
+```{r}
+# Summarize data by cluster using across
+summary_by_cluster <- housing_data_v2 %>%
+  group_by(cluster) %>%
+  summarise(across(
+    c(roi, population, median_household_income, vacancy_rate, median_gross_rent, median_home_value, median_age),
+    list(
+      median = ~ median(.x, na.rm = TRUE),
+      mean = ~ mean(.x, na.rm = TRUE),
+      min = ~ min(.x, na.rm = TRUE),
+      max = ~ max(.x, na.rm = TRUE)
+    ),
+    .names = "{.col}_{.fn}"
+  )) 
+
+view(summary_by_cluster)
+```
+
