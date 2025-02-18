@@ -1,0 +1,335 @@
+---
+title: "REDA_Week7_Fall2024"
+output: pdf_document
+date: "2024-10-21"
+---
+
+```{r}
+library(data.table)
+library(tidyverse)
+library(xts)
+library(quantmod)
+library(stargazer)
+```
+
+**Notes - Regression Diagnostics**
+
+<!-- # Evaluating the quality of a statistical model and its predictive power. -->
+<!-- # The R^2 metric is one of the most cited regression diagnostics. -->
+
+<!-- # If a linear regression uses a constant (which should be included in practice), -->
+<!-- # the R^2 is bounded between 0 and 1. It measures the share of the variation in  -->
+<!-- # y explained by the variation in the features used in a model.  -->
+
+<!-- # Given this definition, "bigger is better" is the first place that people go to  -->
+<!-- # evaluate the quality of the model, which is unwarranted. -->
+
+<!-- "However, it can still be challenging to determine what is a good R^2 value,  -->
+<!-- and in general, this will depend on the application.  -->
+<!-- For instance, in certain problems in physics, we may know that the data truly comes  -->
+<!-- from a linear model with a small residual error.  -->
+<!-- In this case, we would expect to see an R^2 value that is extremely close to 1,  -->
+<!-- and a substantially smaller R^2 might indicate serious problems  -->
+<!-- with the experiment in which the data were generated.  -->
+<!-- On the other hand, in typical application in biology, pyschology,  -->
+<!-- marketing and other domains, the linear model is at best an extremely rough -->
+<!-- approximation to the data, and residual errors due to other unmeasured factors -->
+<!-- are often very large. In this setting, we would expect only a very small proportion  -->
+<!-- of the variance in the response to be explained by the predictor,  -->
+<!-- and an R^2 value well below 0.1 might be more realistic." -->
+
+<!-- - Trevor Hastie, Robert Tibshirani, et al. -->
+
+```{r}
+# Set the seed for random number generation to ensure reproducibility
+set.seed(1066)
+
+# Generate 1000 random numbers from a normal distribution with mean=0 and sd=1 for error term e1
+e1 = rnorm(1000, mean=0, sd=1)
+# Generate 1000 random numbers from a normal distribution with mean=0 and sd=2 for error term e2, introducing more variability
+e2 = rnorm(1000, mean=0, sd=2)
+# Generate 1000 random numbers from a normal distribution with mean=0 and sd=1 for the independent variable x
+x = rnorm(1000, mean=0, sd=1)
+```
+
+```{r}
+# create dependent variable y1 using a linear model with a slope of 2, intercept of 1, and adding the error term e1
+y1 = 1 + 2 * x + e1
+# create dependent variable y2 using the same linear model as y1 but with the error term e2, which has higher variability
+y2 = 1 + 2 * x + e2
+
+# Calculate the correlation between y1 and y2
+cor(y1, y2)
+```
+
+```{r}
+# creating a data frame for the first plot
+df1 <- data.frame(x, y1)
+
+# plotting y1 against x
+ggplot(df1, aes(x=x, y=y1)) +
+  geom_point(color="darkblue", shape=16) + # Using dark blue points
+  ggtitle("Smaller Variance") + # Adding a title
+  xlim(-10, 10) + ylim(-10, 10) + # Setting x and y axis limits
+  theme_minimal() + # Using a minimal theme for a cleaner look
+  theme(panel.grid.major = element_line(size = 0.5), panel.grid.minor = element_line(size = 0.25)) # Adding grid lines
+```
+
+```{r}
+# creating a data frame for the second plot
+df2 <- data.frame(x, y2)
+
+# plotting y2 against x
+ggplot(df2, aes(x=x, y=y2)) +
+  geom_point(color="darkblue", shape=16) + # Using dark blue points
+  ggtitle("Larger Variance") + # Adding a title
+  xlim(-10, 10) + ylim(-10, 10) + # Setting x and y axis limits
+  theme_minimal() + # Using a minimal theme for a cleaner look
+  theme(panel.grid.major = element_line(size = 0.5), panel.grid.minor = element_line(size = 0.25)) # Adding grid lines
+```
+
+```{r}
+# creating a data frame for the third plot
+df3 <- data.frame(y1, y2)
+
+# plotting y1 against y2
+ggplot(df3, aes(x=y1, y=y2)) +
+  geom_point(color="darkblue", shape=16) + # Using dark blue points
+  ggtitle("Correlation in Y's is 0.66") + # Adding a title with assumed correlation
+  xlim(-10, 10) + ylim(-10, 10) + # Setting x and y axis limits
+  theme_minimal() + # Using a minimal theme for a cleaner look
+  theme(panel.grid.major = element_line(size = 0.5), panel.grid.minor = element_line(size = 0.25)) # Adding grid lines
+```
+
+```{r}
+# linear regression of y1 on x and display the summary with confidence intervals using stargazer
+lm.y1 = lm(y1 ~ x)
+stargazer(lm.y1, type="text", title="Y1 Data Generating Process", single.row=TRUE, ci=TRUE, ci.level=0.95)
+```
+
+```{r}
+# linear regression of y2 on x and display the summary with confidence intervals using stargazer, highlighting the impact of increased variance in e2
+lm.y2 = lm(y2 ~ x)
+stargazer(lm.y2, type="text", title="Y2 Data Generating Process", single.row=TRUE, ci=TRUE, ci.level=0.95)
+```
+
+**NYC**
+
+```{r}
+# import the data
+nyc_rent <- fread('~/Downloads/nyc.csv') %>%
+    # rename the columns to more descriptive names for easier understanding and manipulation
+  dplyr::rename(geo = 1, 
+                date = 2, 
+                rent = 3, 
+                vacancy = 4, 
+                cap_rate = 5, 
+                gross_rent = 6) %>%
+  dplyr::mutate(gfc = if_else(
+    date >= 2008.3, "After", "Before"))
+
+# use glimpse() instead of view() to get a quick overview of the data structure in a non-interactive environment
+glimpse(nyc_rent)
+```
+```{r}
+nyc_rent %>% count(gfc)
+```
+
+
+```{r}
+# create a scatter plot and line plot of NYC Office Vacancy over time
+# aes() sets up the aesthetics, mapping date to x-axis and vacancy rate to y-axis
+# geom_point() and geom_line() add the points and lines to the plot, respectively
+# theme_minimal() applies a minimalistic theme to the plot
+# labs() sets the title and labels for axes
+# scale_x_continuous() and scale_y_continuous() are used to define the limits of the x and y axes
+ggplot(nyc_rent, aes(x = date, y = vacancy)) +
+  geom_point(color = "darkred") +
+  geom_line(color = "darkred") +
+  theme_minimal() +
+  labs(title = "NYC Office Vacancy", x = "Date", y = "Vacancy") +
+  scale_x_continuous(limits = c(1990, 2019)) +
+  scale_y_continuous(limits = c(0, 20))
+```
+
+```{r}
+# similar to the vacancy plot, but mapping rent index to the y-axis
+ggplot(nyc_rent, aes(x = date, y = rent)) +
+  geom_point(color = "darkblue") +
+  geom_line(color = "darkblue") +
+  theme_minimal() +
+  labs(title = "NYC Office Rent Index (2008 $)", x = "Date", y = "Rents") +
+  scale_x_continuous(limits = c(1980, 2019)) +
+  scale_y_continuous(limits = c(20, 80))
+```
+
+```{r}
+# This plot compares rent index to vacancy rates directly
+# geom_smooth(method = "lm") adds a linear regression line to the plot, indicating the trend
+ggplot(nyc_rent, aes(x = rent, y = vacancy)) +
+  geom_point(color = "darkblue", shape = 16) +
+  geom_smooth(method = "lm") +
+  ggtitle("NYC Office Rent & Vacancy index (2008 $)") +
+  scale_x_continuous(limits = c (33,70)) +
+  #scale_y_continuous(limits = c (5,15)) + 
+  theme_minimal() +
+  theme(panel.grid.major = element_line(size = 0.5), panel.grid.minor = element_line(size = 0.5)) 
+
+```
+
+```{r}
+# fit a linear model where the response variable is 'vacancy' and the predictor is 'rent'.
+# 'lm' is a function that fits linear models. 
+# 'data$vacancy ~ data$rent' specifies the model formula, indicating 'vacancy' as the dependent variable
+# and 'rent' as the independent variable, both from the 'data' dataframe.
+model = lm(nyc_rent$vacancy ~ nyc_rent$rent + nyc_rent$gfc)
+
+stargazer(model, type="text", 
+          title="What Causes What?", 
+          single.row=TRUE, 
+          ci=TRUE, ci.level=0.95)
+```
+
+```{r}
+# Coefficient for rent: The coefficient for rent is -0.192, and it is marked with three asterisks (***), indicating that the p-value is less than 0.01. This means the effect of rent on vacancy is statistically significant at the 1% level. The confidence interval for this coefficient does not include 0 (-0.234 to -0.151), further supporting the significance of the relationship.
+# 
+# Constant (Intercept): The constant term is 20.364, also with three asterisks (***), indicating it is significantly different from 0 at the 1% level. The confidence interval (18.259, 22.469) does not include 0, which supports its significance. However, the intercept term mainly tells us the expected value of the dependent variable (vacancy) when all independent variables (rent) are 0 and is not directly related to testing the hypothesis of no relationship between rent and vacancy.
+# 
+# F Statistic: The F statistic is 83.605, marked with three asterisks (***), indicating that the model as a whole is significant at the 1% level. This means we can reject the null hypothesis that all coefficients are equal to zero (including the slope for rent), supporting the existence of a relationship between rent and vacancy.
+# 
+# R² and Adjusted R²: The R² value is 0.407, and the Adjusted R² is 0.402, indicating that approximately 40% of the variability in vacancy is explained by rent. This is a measure of the model's explanatory power and further supports the relevance of the model.
+```
+
+
+**Fama-French Factor Simulation**
+
+```{r}
+# The Fama-French factor model was developed for understanding stock returns. In its original form, the Fama-French model expands on the Capital Asset Pricing Model (CAPM) by adding size and value factors to the market risk factor in CAPM. The three factors are:
+
+# Market Factor (RM-RF): The excess return (i.e., the additional compensation investors expect for taking on the higher risk associated with investing in the market portfolio instead of opting for risk-free assets) of the market portfolio over the risk-free rate, capturing market risk.
+
+# Size Factor (SMB, Small Minus Big): The excess return of portfolios of small-cap stocks (e.g., small-cap companies are those with a market capitalization ranging from around $300 million to $2 billion, known for their potential for growth and higher risk/reward profiles compared to larger companies) over the returns of portfolios of large-cap stocks, capturing the size effect.
+
+# Value Factor (HML, High Minus Low): The excess return of portfolios of high book-to-market stocks (i.e., a high book-to-market ratio suggests that the company's stock is undervalued by the market relative to its book value.) over the returns of portfolios of low book-to-market stocks, capturing the value effect.
+
+# The Fama-French model helps in understanding the risk and return characteristics of real estate investments.
+```
+
+```{r}
+# data dictionary:
+
+# mktrf: Market returns minus risk free rate.  This is the excess return of the market portfolio over the risk-free rate. It's a measure of the market risk premium, capturing the additional return investors expect for choosing to invest in the market portfolio instead of risk-free assets. In the Fama-French models, it represents the general market risk factor.
+
+# smb: Small minus big. Captures the size effect on returns. It is calculated as the difference in returns between portfolios of small-cap stocks and large-cap stocks. The Fama-French model posits that, on average, small-cap stocks will outperform large-cap stocks, reflecting the higher risk and potential for higher returns associated with smaller companies.
+
+# hml: High minus low.  Measures the value effect. It is the difference in returns between portfolios of stocks with high book-to-market ratios (value stocks) and those with low book-to-market ratios (growth stocks). The hypothesis is that value stocks are undervalued by the market and, therefore, offer higher returns than growth stocks, adjusting for risk.
+
+# rmw: Robust minus weak. Represents the difference in returns between portfolios of stocks with robust (high) profitability and those with weak (low) profitability. It is based on the observation that companies with higher profitability metrics tend to provide higher returns than less profitable ones.
+
+# cma: Conservative minus aggressive. This factor captures the investment style effect, differentiating between stocks of companies that invest conservatively and those that invest aggressively. It is calculated as the difference in returns between portfolios of stocks with low investment (conservative) and high investment (aggressive). The rationale is that companies that invest more conservatively tend to have higher returns than those that invest more aggressively, possibly due to the latter taking on too much risk.
+
+# daily five factors (FF5F) data downloaded from Professor Ken Frenh's website.
+# link: https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html
+# FF5F data must be scaled to basis points.
+```
+
+```{r}
+# reading and transforming Fama-French Factor Model data
+# across() is used with mutate() to apply a function to multiple columns at once
+# it divides each specified column by 100 to scale the data
+ff5f <- read.dta13("~/Downloads/FF5F.dta") %>%
+  dplyr::mutate(across(c(mktrf, smb, hml, rmw, cma, rf), ~ .x / 100))
+
+# Use glimpse() to quickly review the structure of the transformed data
+glimpse(ff5f)
+```
+
+```{r}
+summary(ff5f)
+```
+
+```{r}
+# creating a histogram for market returns
+# geom_histogram() plots the histogram, with bins set to 50 for granularity
+# geom_vline() adds a vertical line at x = 0 to highlight the zero point
+
+```
+
+```{r}
+# create an time series dataframe using xts function
+a = xts(x=ff5f, order.by = ff5f$date) 
+head(a)
+```
+
+**AAPL**
+
+```{r}
+# use the quantmod package to download stock data for Apple Inc. (AAPL)
+# the data range is specified from January 1, 2006, to December 31, 2017.
+getSymbols(c('AAPL'), from="2006-01-01", to="2018-09-28")
+
+# extract the Adjusted Close prices from the downloaded AAPL data.
+# Adjusted Close prices account for dividends and stock splits.
+b = AAPL$AAPL.Adjusted
+
+# calculate the logarithmic returns of the Adjusted Close prices.
+# log returns are used for their better statistical properties compared to simple returns.
+# the diff(log(b), lag=1) computes the difference in log prices between consecutive days, representing daily returns.
+b = diff(log(b), lag=1)
+
+# remove any NA values that might have been introduced during the calculation of returns.
+# NA values can occur, for example, at the start of the series where there is no previous day to compare.
+b = na.omit(b)
+
+# Displays the last few entries of the AAPL logarithmic returns to inspect the recent data.
+tail(b)
+```
+
+```{r}
+# merge the previously prepared time-series data 'a' (not shown in this snippet) with the AAPL log returns 'b'.
+# The 'right' join is used, meaning all rows from 'b' will be included in the result, 
+# and only matching rows from 'a' (based on common column names).
+merged_data = merge(a, b, join='right')
+
+# specifies new column names for the merged dataset to make it more understandable.
+# these names represent different financial metrics and the AAPL log returns.
+names = c("date", "mktrf", "smb", "hml", "rmw", "cma", "rf", "aapl")
+
+# apply the new column names to the dataset.
+colnames(merged_data) = names
+
+# remove the 'date' column from the dataset.
+# this operation is typically performed if the date is not needed for subsequent analysis, 
+# or if it's already implicitly handled by the dataset's structure.
+merged_data = merged_data[, colnames(merged_data) != "date"]
+
+# displays the last few entries of the merged and modified dataset for inspection.
+tail(merged_data)
+```
+
+```{r}
+# fit a linear model where the dependent variable is the AAPL log returns adjusted for/minus the risk-free rate ('aapl - rf'),
+# and the independent variable is the market return factor ('mktrf').
+# this model attempts to explain AAPL returns through market movements.
+ff1f.ols = lm('aapl - rf ~ mktrf', data = merged_data)
+
+# use stargazer to display the linear model results in a nicely formatted text table.
+stargazer(ff1f.ols, type="text", title="Baseline Results", single.row=TRUE, ci=TRUE, ci.level=0.95)
+```
+
+```{r}
+# extend the previous model to include small minus big ('smb') and high minus low ('hml') factors,
+# capture size and value effects in addition to the market return.
+ff3f.ols = lm('aapl - rf ~ mktrf + smb + hml', data = merged_data)
+# display the extended model's results.
+stargazer(ff3f.ols, type="text", title="FF3F Results", single.row=TRUE, ci=TRUE, ci.level=0.95)
+```
+
+```{r}
+# further extend the model to include robust minus weak ('rmw') and conservative minus aggressive ('cma') factors,
+# explain AAPL returns through a broader set of financial metrics.
+ff5f.ols = lm('aapl - rf ~ mktrf + smb + hml + rmw + cma', data = merged_data)
+
+# display the comprehensive model's results.
+stargazer(ff5f.ols, type="text", title="FF5F Results", single.row=TRUE, ci=TRUE, ci.level=0.95)
+```
